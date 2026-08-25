@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import List, Optional, Sequence, Union
 
 import torch
+import numpy as np
 from transformers import BitsAndBytesConfig
 from diffusers import FluxPipeline, FluxTransformer2DModel
 
@@ -146,24 +147,24 @@ def find_indices_to_edit(
 # ---------------------------------------------------------------------------
 
 
-def apply_steering(
-    base_prompt_embeds: torch.Tensor,
-    idx_to_edit: Sequence[int],
-    steering_vector: torch.Tensor,
-    factor: float,
-) -> torch.Tensor:
-    """Add *factor* × *steering_vector* to *base_prompt_embeds* at *idx_to_edit* (all batch items)."""
-    prompt_embeds = base_prompt_embeds.clone()
-    steering_vec = steering_vector.to(device=prompt_embeds.device, dtype=prompt_embeds.dtype)
+def apply_steering(prompt_embeds, idx_to_edit, steering_vec, factor):
+    # Ensure steering_vec is a 1D tensor of shape [12288] to match prompt_embeds[batch_idx, idx, :]
+    if isinstance(steering_vec, np.ndarray):
+        steering_vec = torch.tensor(steering_vec, dtype=prompt_embeds.dtype, device=prompt_embeds.device)
+    steering_vec = steering_vec.squeeze() # Removes any leading batch dimensions like [1, 12288] -> [12288]
+
     if steering_vec.shape[-1] != prompt_embeds.shape[-1]:
-        raise ValueError(
-            f"Steering vector width {steering_vec.shape[-1]} does not match "
-            f"prompt embeddings {prompt_embeds.shape[-1]}."
-        )
-    for batch_idx in range(prompt_embeds.shape[0]):
-        for idx in idx_to_edit:
-            if idx < prompt_embeds.shape[1]:
-                prompt_embeds[batch_idx, idx, :] += factor * steering_vec
+        raise ValueError(f"Steering vector width {steering_vec.shape[-1]} does not match prompt embeddings {prompt_embeds.shape[-1]}.")
+
+    # Forcefully escape inference mode restrictions by using .data.clone()
+    with torch.enable_grad():
+        prompt_embeds = prompt_embeds.detach().data.clone()
+
+        for batch_idx in range(prompt_embeds.shape[0]):
+            for idx in idx_to_edit:
+                slice_to_steer = prompt_embeds[batch_idx, idx, :]
+                prompt_embeds[batch_idx, idx, :] = slice_to_steer + (factor * steering_vec)
+            
     return prompt_embeds
 
 
