@@ -174,11 +174,34 @@ def main():
         concept_dir.mkdir(parents=True, exist_ok=True)
         
         vector_file = concept_dir / "steering_last_layer.npy"
-        if not vector_file.exists() or np.load(vector_file).shape[-1] != 4096:
-            np.save(vector_file, np.zeros((1, 4096), dtype=np.float32))
-            np.save(concept_dir / "min_projection_value.npy", np.array([-5.0], dtype=np.float32))
+        if vector_file.exists() and np.load(vector_file).shape[-1] == 4096 and not np.allclose(np.load(vector_file), 0):
+            steering_vector = load_steering_vector(vector_file, device=device)
+        else:
+            # On-the-fly contrastive steering vector computation from PIE-bench target vs source prompt
+            source_prompt = data.get("source_prompt", "")
+            with torch.inference_mode():
+                target_embeds, _, _ = pipe.encode_prompt(prompt=prompt, device=device, max_sequence_length=512)
+                if source_prompt and source_prompt != prompt:
+                    source_embeds, _, _ = pipe.encode_prompt(prompt=source_prompt, device=device, max_sequence_length=512)
+                    diff = (target_embeds - source_embeds).squeeze(0)
+                    token_diffs = diff.norm(dim=-1)
+                    active_indices = (token_diffs > 1e-4).nonzero(as_tuple=True)[0]
+                    if len(active_indices) > 0:
+                        dom_vec = diff[active_indices].mean(dim=0)
+                    else:
+                        dom_vec = diff.mean(dim=0)
+                else:
+                    dom_vec = target_embeds.squeeze(0).mean(dim=0)
 
-        steering_vector = load_steering_vector(vector_file, device=device)
+                norm = torch.norm(dom_vec)
+                if norm > 1e-8:
+                    steering_vector = (dom_vec / norm).to(dtype=torch.float32)
+                else:
+                    steering_vector = torch.zeros(4096, dtype=torch.float32, device=device)
+
+            # Save computed vector so subsequent samples in same concept reuse it
+            np.save(vector_file, steering_vector.cpu().numpy().astype(np.float32))
+            np.save(concept_dir / "min_projection_value.npy", np.array([-5.0], dtype=np.float32))
         condition_image = load_image(image_path).convert("RGB")
 
         try:
