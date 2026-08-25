@@ -15,7 +15,11 @@ from transformers import Mistral3ForConditionalGeneration, PixtralProcessor
 from .pipeline import SYSTEM_MESSAGE, Flux2Pipeline, format_input
 from steering import DTYPE_MAP, find_all_spans, split_style_terms
 
-MODEL_ID = "black-forest-labs/FLUX.2-dev"
+from transformers import BitsAndBytesConfig
+from diffusers import FluxPipeline, FluxTransformer2DModel
+
+# MODEL_ID = "black-forest-labs/FLUX.2-dev"
+MODEL_ID = "black-forest-labs/FLUX.1-dev"
 LORA_REPO = "fal/FLUX.2-dev-Turbo"
 LORA_WEIGHT = "flux.2-turbo-lora.safetensors"
 TURBO_SIGMAS = [1.0, 0.6509, 0.4374, 0.2932, 0.1893, 0.1108, 0.0495, 0.00031]
@@ -299,16 +303,36 @@ def build_pipeline(
     use_distributed: bool,
     pipeline_device: str = "cuda",
 ) -> Flux2Pipeline:
-    if use_distributed:
-        pipe = Flux2Pipeline.from_pretrained_distributed(
-            MODEL_ID,
-            torch_dtype=torch_dtype,
-            text_encoder_device_map="auto",
-            transformer_device_map="auto",
-            vae_device_map=None,
-        )
-    else:
-        pipe = Flux2Pipeline.from_pretrained(MODEL_ID, torch_dtype=torch_dtype).to(pipeline_device)
+    # if use_distributed:
+    #     pipe = Flux2Pipeline.from_pretrained_distributed(
+    #         MODEL_ID,
+    #         torch_dtype=torch_dtype,
+    #         text_encoder_device_map="auto",
+    #         transformer_device_map="auto",
+    #         vae_device_map=None,
+    #     )
+    # else:   
+    #     pipe = Flux2Pipeline.from_pretrained(MODEL_ID, torch_dtype=torch_dtype).to(pipeline_device)
+    print("⚡ Loading 4-bit NF4 Quantized FLUX.1-dev Transformer...")
+    
+    quant_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch_dtype
+    )
+    
+    transformer = FluxTransformer2DModel.from_pretrained(
+        MODEL_ID,
+        subfolder="transformer",
+        quantization_config=quant_config,
+        torch_dtype=torch_dtype,
+    )
+    
+    pipe = FluxPipeline.from_pretrained(
+        MODEL_ID,
+        transformer=transformer,
+        torch_dtype=torch_dtype,
+    ).to(pipeline_device)
 
     if use_lora:
         pipe.load_lora_weights_and_redistribute(LORA_REPO, weight_name=LORA_WEIGHT)
