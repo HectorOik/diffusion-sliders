@@ -21,7 +21,7 @@ from steering.elastic_band import (
     canonical_strength
 )
 # Import pipeline builder from Ekin's core utilities
-from models.flux2._utils import build_pipeline
+from models.flux1._utils import build_pipeline
 from diffusers.utils import load_image
 
 # ==========================================
@@ -97,7 +97,7 @@ def main():
     parser.add_argument("--images_dir", type=str, default="./datasets", help="Path to images directory")
     parser.add_argument("--output_dir", type=str, default="piebench_adaptive_outputs", help="Output directory")
     parser.add_argument("--samples_per_cat", type=int, default=20, help="Number of samples per category")
-    parser.add_argument("--config", type=str, default="configs/flux2_local.yaml", help="Path to elastic band config YAML")
+    parser.add_argument("--config", type=str, default="configs/flux1_local.yaml", help="Path to elastic band config YAML")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -141,7 +141,7 @@ def main():
         condition_image = load_image(image_path).convert("RGB")
 
         try:
-            from models.flux2.elastic_band import ElasticBandFlux2Runner
+            from models.flux1.elastic_band import ElasticBandFlux2Runner
             
             runner = ElasticBandFlux2Runner(
                 pipe=pipe,
@@ -149,8 +149,8 @@ def main():
                 tokens_to_edit=[category],
                 condition_image=condition_image,
                 seed=42,
-                use_lora=True,
-                guidance_scale=2.5
+                use_lora=False,
+                guidance_scale=3.5 #standard flux1 guidance scale
             )
 
             stored_min = load_min_projection_value(concept_dir)
