@@ -104,19 +104,8 @@ def main() -> None:
     t5_tokenizer = getattr(pipe, "tokenizer_2", pipe.tokenizer)
     text_encoder_device = next(t5_encoder.parameters()).device
 
-    # Encode base prompt multi-layer hidden states via T5-XXL
-    tokens = t5_tokenizer(
-        args.prompt, return_tensors="pt", padding="max_length",
-        truncation=True, max_length=args.max_sequence_length
-    ).to(text_encoder_device)
-
-    out = t5_encoder(input_ids=tokens.input_ids, output_hidden_states=True, use_cache=False)
-    hidden = torch.stack([out.hidden_states[i] for i in args.text_encoder_out_layers], dim=1)
-    b, l, s, h = hidden.shape
-    base_prompt_embeds = hidden.permute(0, 2, 1, 3).reshape(b, s, l * h).to(dtype=pipe.dtype)
-
-    # Obtain pooled prompt embeddings natively
-    _, pooled_prompt_embeds, _ = pipe.encode_prompt(
+    # Encode base prompt embeddings natively for FLUX 1
+    base_prompt_embeds, pooled_prompt_embeds, _ = pipe.encode_prompt(
         prompt=args.prompt, prompt_2=None, device=text_encoder_device, max_sequence_length=args.max_sequence_length
     )
 

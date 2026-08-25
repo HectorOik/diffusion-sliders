@@ -112,14 +112,9 @@ def collect_style_representations(args: argparse.Namespace) -> tuple[List[np.nda
                 safe_pos_layers = [min(i, max_pos_layer) for i in args.text_encoder_out_layers]
                 safe_neg_layers = [min(i, max_neg_layer) for i in args.text_encoder_out_layers]
 
-                # Extract and concatenate selected layers
-                pos_hidden = torch.stack([pos_hs[i] for i in safe_pos_layers], dim=1)
-                neg_hidden = torch.stack([neg_hs[i] for i in safe_neg_layers], dim=1)
-
-                # Reshape to match multi-layer hidden embedding structure
-                b, l, s, h = pos_hidden.shape
-                pos_embeds = pos_hidden.permute(0, 2, 1, 3).reshape(b, s, l * h)
-                neg_embeds = neg_hidden.permute(0, 2, 1, 3).reshape(b, s, l * h)
+                # Extract and aggregate selected layers into 4096-dim feature space
+                pos_embeds = torch.stack([pos_hs[i] for i in safe_pos_layers], dim=1).mean(dim=1)
+                neg_embeds = torch.stack([neg_hs[i] for i in safe_neg_layers], dim=1).mean(dim=1)
 
             pos_vector = pool_positions(pos_embeds, pos_positions)
             neg_vector = pool_positions(neg_embeds, neg_positions)

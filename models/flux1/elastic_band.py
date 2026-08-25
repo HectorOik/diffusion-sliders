@@ -118,32 +118,12 @@ class ElasticBandFlux1Runner:
         self.pair_distance_cache: dict[tuple[float, float], float] = {}
 
     def _encode_base_embeds(self, prompt: str) -> tuple[torch.Tensor, torch.Tensor]:
-        t5_encoder = getattr(self.pipe, "text_encoder_2", self.pipe.text_encoder)
-        t5_tokenizer = getattr(self.pipe, "tokenizer_2", self.pipe.tokenizer)
-        
         with torch.inference_mode():
-            tokens = t5_tokenizer(
-                prompt, return_tensors="pt", padding="max_length",
-                truncation=True, max_length=self.max_sequence_length
-            ).to(self.text_encoder_device)
-            
-            out = t5_encoder(input_ids=tokens.input_ids, output_hidden_states=True)
-
-            # Safely fetch hidden states tuple and clamp layer indices to prevent out-of-range errors
-            hs = getattr(out, "hidden_states", None) or out[0]
-            max_layer = len(hs) - 1
-            safe_layers = [min(i, max_layer) for i in self.text_encoder_out_layers]
-            
-            hidden = torch.stack([hs[i] for i in safe_layers], dim=1)
-           
-            # hidden = torch.stack([out.hidden_states[i] for i in self.text_encoder_out_layers], dim=1)
-            
-            b, l, s, h = hidden.shape
-            prompt_embeds = hidden.permute(0, 2, 1, 3).reshape(b, s, l * h).to(dtype=self.pipe.dtype)
-            
-            # Obtain pooled embeddings via standard pipeline encoding call
-            _, pooled_prompt_embeds, _ = self.pipe.encode_prompt(
-                prompt=prompt, prompt_2=None, device=self.text_encoder_device, max_sequence_length=self.max_sequence_length
+            prompt_embeds, pooled_prompt_embeds, _ = self.pipe.encode_prompt(
+                prompt=prompt,
+                prompt_2=None,
+                device=self.text_encoder_device,
+                max_sequence_length=self.max_sequence_length,
             )
             
         return prompt_embeds, pooled_prompt_embeds

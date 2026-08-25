@@ -175,7 +175,7 @@ def main():
         
         vector_file = concept_dir / "steering_last_layer.npy"
         if not vector_file.exists():
-            np.save(vector_file, np.zeros((1, 12288), dtype=np.float32))
+            np.save(vector_file, np.zeros((1, 4096), dtype=np.float32))
             np.save(concept_dir / "min_projection_value.npy", np.array([-5.0], dtype=np.float32))
 
         steering_vector = load_steering_vector(vector_file, device=device)
