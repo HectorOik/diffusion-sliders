@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Virtual Environments
+venv/
+ENV/
+env/
+.env/
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# HuggingFace & Torch Caches
+.cache/
+huggingface/
+
+# Outputs, Generated Images, and Caches
+outputs/
+piebench_adaptive_outputs/
+outputs_flowslider/
+datasets/_extracted_cache/
+*.npy
+*.safetensors
+*.pt
+*.ckpt
+
+# Datasets
+datasets/*.parquet
