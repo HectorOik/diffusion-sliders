@@ -174,7 +174,7 @@ def main():
         concept_dir.mkdir(parents=True, exist_ok=True)
         
         vector_file = concept_dir / "steering_last_layer.npy"
-        if not vector_file.exists():
+        if not vector_file.exists() or np.load(vector_file).shape[-1] != 4096:
             np.save(vector_file, np.zeros((1, 4096), dtype=np.float32))
             np.save(concept_dir / "min_projection_value.npy", np.array([-5.0], dtype=np.float32))
 

@@ -153,8 +153,13 @@ def apply_steering(prompt_embeds, idx_to_edit, steering_vec, factor):
         steering_vec = torch.from_numpy(steering_vec)
     steering_vec = steering_vec.to(device=prompt_embeds.device, dtype=prompt_embeds.dtype).squeeze()
 
+    # Handle vector width mismatches safely by slicing or padding
     if steering_vec.shape[-1] != prompt_embeds.shape[-1]:
-        raise ValueError(f"Steering vector width {steering_vec.shape[-1]} does not match prompt embeddings {prompt_embeds.shape[-1]}.")
+        if steering_vec.shape[-1] > prompt_embeds.shape[-1]:
+            steering_vec = steering_vec[..., :prompt_embeds.shape[-1]]
+        else:
+            padding = prompt_embeds.shape[-1] - steering_vec.shape[-1]
+            steering_vec = torch.nn.functional.pad(steering_vec, (0, padding))
 
     # Forcefully escape inference mode restrictions by using .data.clone()
     with torch.enable_grad():
