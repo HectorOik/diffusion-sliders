@@ -134,16 +134,16 @@ def main():
         
         vector_file = concept_dir / "steering_last_layer.npy"
         if not vector_file.exists():
-            np.save(vector_file, np.zeros((1, 1024), dtype=np.float32))
+            np.save(vector_file, np.zeros((1, 12384), dtype=np.float32))
             np.save(concept_dir / "min_projection_value.npy", np.array([-5.0], dtype=np.float32))
 
         steering_vector = load_steering_vector(vector_file, device=device)
         condition_image = load_image(image_path).convert("RGB")
 
         try:
-            from models.flux1.elastic_band import ElasticBandFlux2Runner
+            from models.flux1.elastic_band import ElasticBandFlux1Runner
             
-            runner = ElasticBandFlux2Runner(
+            runner = ElasticBandFlux1Runner(
                 pipe=pipe,
                 prompt=prompt,
                 tokens_to_edit=[category],
@@ -177,7 +177,9 @@ def main():
                 json.dump(elastic_result, f, indent=2)
 
         except Exception as e:
-            print(f"Error processing sample {sample_id} in category {category}: {e}")
+            import traceback
+            print(f"--- ERROR in sample {sample_id} ({category}) ---")
+            traceback.print_exc()
             continue
 
         torch.cuda.empty_cache()

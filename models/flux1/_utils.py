@@ -112,29 +112,33 @@ def find_indices_to_edit(
     """Return prompt-embedding positions for *tokens_to_edit* within *prompt* using T5 tokenizer."""
     tokenizer = pipe.tokenizer_2 if hasattr(pipe, "tokenizer_2") else pipe.tokenizer
     
-    prepared = prepare_flux1_text_inputs(
-        tokenizer=tokenizer,
-        prompt=prompt,
-        max_sequence_length=max_sequence_length,
-    )
-    style = " ".join(
-        part
-        for token in tokens_to_edit
-        for part in split_style_terms(token)
-    )
-    positions = get_style_token_positions(
-        user_prompt=prompt,
-        style=style,
-        plain_offsets=prepared["plain_offsets"],
-        plain_input_ids=prepared["plain_input_ids"],
-        special_token_ids=getattr(tokenizer, "all_special_ids", []),
-    )
-    
+    try:
+        prepared = prepare_flux1_text_inputs(
+            tokenizer=tokenizer,
+            prompt=prompt,
+            max_sequence_length=max_sequence_length,
+        )
+        style = " ".join(
+            part
+            for token in tokens_to_edit
+            for part in split_style_terms(token)
+        )
+        positions = get_style_token_positions(
+            user_prompt=prompt,
+            style=style,
+            plain_offsets=prepared["plain_offsets"],
+            plain_input_ids=prepared["plain_input_ids"],
+            special_token_ids=getattr(tokenizer, "all_special_ids", []),
+        )
+    except Exception:
+        positions = []
+
     if not positions:
         # Fallback to middle sequence content tokens if exact string spans fail
-        positions = list(range(1, min(max_sequence_length - 1, 15)))
+        max_len = min(max_sequence_length - 1, 15)
+        positions = list(range(1, max_len))
         
-    return positions
+    return sorted([int(p) for p in positions if p < max_sequence_length])
 
 
 # ---------------------------------------------------------------------------

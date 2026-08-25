@@ -127,8 +127,16 @@ class ElasticBandFlux1Runner:
                 truncation=True, max_length=self.max_sequence_length
             ).to(self.text_encoder_device)
             
-            out = t5_encoder(input_ids=tokens.input_ids, output_hidden_states=True, use_cache=False)
-            hidden = torch.stack([out.hidden_states[i] for i in self.text_encoder_out_layers], dim=1)
+            out = t5_encoder(input_ids=tokens.input_ids, output_hidden_states=True)
+
+            # Safely fetch hidden states tuple and clamp layer indices to prevent out-of-range errors
+            hs = getattr(out, "hidden_states", None) or out[0]
+            max_layer = len(hs) - 1
+            safe_layers = [min(i, max_layer) for i in self.text_encoder_out_layers]
+            
+            hidden = torch.stack([hs[i] for i in safe_layers], dim=1)
+           
+            # hidden = torch.stack([out.hidden_states[i] for i in self.text_encoder_out_layers], dim=1)
             
             b, l, s, h = hidden.shape
             prompt_embeds = hidden.permute(0, 2, 1, 3).reshape(b, s, l * h).to(dtype=self.pipe.dtype)

@@ -91,12 +91,30 @@ def collect_style_representations(args: argparse.Namespace) -> tuple[List[np.nda
                     truncation=True, max_length=args.max_sequence_length
                 ).to(args.device)
 
-                pos_out = t5_encoder(input_ids=pos_tokens.input_ids, output_hidden_states=True, use_cache=False)
-                neg_out = t5_encoder(input_ids=neg_tokens.input_ids, output_hidden_states=True, use_cache=False)
+                pos_out = t5_encoder(input_ids=pos_tokens.input_ids, output_hidden_states=True)
+                neg_out = t5_encoder(input_ids=neg_tokens.input_ids, output_hidden_states=True)
+
+                # DEBUG CLUES: Uncover the exact structure being returned
+                print("DEBUG pos_out type:", type(pos_out))
+                if hasattr(pos_out, "hidden_states"):
+                    print("DEBUG pos_out.hidden_states length:", len(pos_out.hidden_states))
+                else:
+                    print("DEBUG pos_out tuple length:", len(pos_out) if isinstance(pos_out, tuple) else "Not a tuple")
+
+                # Safely fetch hidden_states tuple, supporting both standard and quantized structures
+                pos_hs = getattr(pos_out, "hidden_states", None) or pos_out[0]
+                neg_hs = getattr(neg_out, "hidden_states", None) or neg_out[0]
+
+                # Bound check requested layers against actual available layers in the tuple
+                max_pos_layer = len(pos_hs) - 1
+                max_neg_layer = len(neg_hs) - 1
+                
+                safe_pos_layers = [min(i, max_pos_layer) for i in args.text_encoder_out_layers]
+                safe_neg_layers = [min(i, max_neg_layer) for i in args.text_encoder_out_layers]
 
                 # Extract and concatenate selected layers
-                pos_hidden = torch.stack([pos_out.hidden_states[i] for i in args.text_encoder_out_layers], dim=1)
-                neg_hidden = torch.stack([neg_out.hidden_states[i] for i in args.text_encoder_out_layers], dim=1)
+                pos_hidden = torch.stack([pos_out.hidden_states[i] for i in safe_layers], dim=1)
+                neg_hidden = torch.stack([neg_out.hidden_states[i] for i in safe_layers], dim=1)
 
                 # Reshape to match multi-layer hidden embedding structure
                 b, l, s, h = pos_hidden.shape
