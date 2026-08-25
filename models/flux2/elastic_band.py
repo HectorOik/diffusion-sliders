@@ -97,7 +97,8 @@ class ElasticBandFlux2Runner:
 
         self.pipe = pipe
         self.pipe.set_progress_bar_config(disable=None)
-        self.text_encoder_device = self.pipe._get_module_execution_device(self.pipe.text_encoder)
+        # self.text_encoder_device = self.pipe._get_module_execution_device(self.pipe.text_encoder)
+        self.text_encoder_device = next(self.pipe.text_encoder.parameters()).device
 
         self.condition_image = condition_image
         self.idx_to_edit = find_indices_to_edit(
