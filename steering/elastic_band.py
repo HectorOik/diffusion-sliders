@@ -182,7 +182,9 @@ def cosine_step(
 
 def load_min_projection_value(concept_path: Path) -> float:
     """Load the stored minimum projection value and ensure it is negative."""
-    value = -abs(float(np.load(concept_path / "min_projection_value.npy")))
+    arr = np.load(concept_path / "min_projection_value.npy")
+    val = float(arr.flat[0]) if hasattr(arr, "flat") else float(arr)
+    value = -abs(val)
     if value == 0.0:
         raise ValueError(
             f"Minimum projection value must be non-zero: {concept_path / 'min_projection_value.npy'}"

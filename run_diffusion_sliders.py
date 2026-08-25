@@ -1,4 +1,6 @@
 import os
+import sys
+import re
 import json
 import torch
 import numpy as np
@@ -10,6 +12,11 @@ import argparse
 from pathlib import Path
 import glob
 
+# Ensure repository root is in sys.path for robust imports regardless of CWD
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 # Import repository's native steering & elastic band modules
 from steering import load_steering_vector
 from steering.elastic_band import (
@@ -20,7 +27,7 @@ from steering.elastic_band import (
     summarize_valid_range,
     canonical_strength
 )
-# Import pipeline builder from Ekin's core utilities
+# Import pipeline builder from models core utilities
 from models.flux1._utils import build_pipeline
 from diffusers.utils import load_image
 
@@ -30,12 +37,23 @@ from diffusers.utils import load_image
 def load_dataset_stratified_pie_bench(mapping_file_path_or_dir, images_dir, samples_per_category=20):
     """
     Loads PIE-bench from parquet files with embedded image bytes and ensures a strict stratified split.
+    Automatically handles bracketed target prompts and extracts targeted edit tokens.
     """
     import pandas as pd
     valid_dataset = []
     
-    if os.path.isdir(mapping_file_path_or_dir):
-        category_dirs = sorted([os.path.join(mapping_file_path_or_dir, d) for d in os.listdir(mapping_file_path_or_dir) if os.path.isdir(os.path.join(mapping_file_path_or_dir, d))])
+    mapping_path = Path(mapping_file_path_or_dir)
+    if (mapping_path / "pie-bench").exists() and (mapping_path / "pie-bench").is_dir():
+        mapping_path = mapping_path / "pie-bench"
+    elif (mapping_path / "pie_bench").exists() and (mapping_path / "pie_bench").is_dir():
+        mapping_path = mapping_path / "pie_bench"
+
+    if os.path.isdir(mapping_path):
+        category_dirs = sorted([
+            os.path.join(mapping_path, d)
+            for d in os.listdir(mapping_path)
+            if os.path.isdir(os.path.join(mapping_path, d))
+        ])
         
         for cat_dir in category_dirs:
             cat_name = os.path.basename(cat_dir)
@@ -43,7 +61,9 @@ def load_dataset_stratified_pie_bench(mapping_file_path_or_dir, images_dir, samp
                 continue
                 
             parquet_files = glob.glob(os.path.join(cat_dir, "*.parquet"))
-            
+            if not parquet_files:
+                continue
+                
             cat_samples_collected = 0
             for p_file in sorted(parquet_files):
                 df = pd.read_parquet(p_file)
@@ -52,34 +72,40 @@ def load_dataset_stratified_pie_bench(mapping_file_path_or_dir, images_dir, samp
                         break
                         
                     sample_id = str(row.get("id", f"sample_{idx}"))
-                    target_prompt = str(row.get("target_prompt", ""))
+                    raw_target_prompt = str(row.get("target_prompt", ""))
                     source_prompt = str(row.get("source_prompt", ""))
                     
-                    # Extract embedded image bytes from the parquet row
+                    # Extract bracketed target edit tokens if present, e.g. [rusty], [motorcycle]
+                    bracket_words = re.findall(r"\[(.*?)\]", raw_target_prompt)
+                    # Clean target prompt for image generation by removing brackets
+                    clean_prompt = re.sub(r"\[(.*?)\]", r"\1", raw_target_prompt)
+                    
+                    # Extract embedded image bytes or image object from the parquet row
                     img_obj = row.get("image", None)
-                    img_path = None
                     
                     temp_img_dir = os.path.join(images_dir, "_extracted_cache", cat_name)
                     os.makedirs(temp_img_dir, exist_ok=True)
                     img_path = os.path.join(temp_img_dir, f"{sample_id}.jpg")
                     
-                    if not os.path.exists(img_path):
-                        if isinstance(img_obj, dict) and "bytes" in img_obj:
+                    if not os.path.exists(img_path) and img_obj is not None:
+                        if isinstance(img_obj, Image.Image):
+                            img_obj.save(img_path)
+                        elif isinstance(img_obj, dict) and "bytes" in img_obj:
                             img_bytes = img_obj["bytes"]
+                            if img_bytes is not None:
+                                with open(img_path, "wb") as f_img:
+                                    f_img.write(img_bytes)
                         elif isinstance(img_obj, bytes):
-                            img_bytes = img_obj
-                        else:
-                            img_bytes = None
-                            
-                        if img_bytes is not None:
                             with open(img_path, "wb") as f_img:
-                                f_img.write(img_bytes)
+                                f_img.write(img_obj)
                     
                     if os.path.exists(img_path):
                         valid_dataset.append({
                             "id": sample_id,
                             "image_path": img_path,
-                            "prompt": target_prompt,
+                            "prompt": clean_prompt,
+                            "raw_prompt": raw_target_prompt,
+                            "tokens_to_edit": bracket_words if bracket_words else [cat_name],
                             "source_prompt": source_prompt,
                             "category": cat_name
                         })
@@ -105,7 +131,18 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    elastic_band_config = ElasticBandConfig.from_yaml(args.config)
+    # Resolve config file path robustly
+    config_path = Path(args.config)
+    if not config_path.exists():
+        alt_config = SCRIPT_DIR / args.config
+        if alt_config.exists():
+            config_path = alt_config
+        else:
+            alt_config_2 = SCRIPT_DIR / "configs" / Path(args.config).name
+            if alt_config_2.exists():
+                config_path = alt_config_2
+
+    elastic_band_config = ElasticBandConfig.from_yaml(config_path)
 
     # 1. Load balanced stratified sample set
     print("Loading stratified PIE-bench dataset...")
@@ -116,11 +153,15 @@ def main():
     print("Loading FLUX pipeline...")
     pipe = build_pipeline(torch_dtype=torch.bfloat16, use_lora=False, use_distributed=False)
 
+    from models.flux1.elastic_band import ElasticBandFlux1Runner
+    runner = None
+
     # 3. Execution Loop over stratified samples
     for data in tqdm(dataset, desc="Stratified Adaptive PIE-Bench Run"):
         sample_id = data["id"]
         category = data["category"]
         prompt = data["prompt"]
+        tokens_to_edit = data["tokens_to_edit"]
         image_path = data["image_path"]
 
         if not os.path.exists(image_path):
@@ -141,17 +182,22 @@ def main():
         condition_image = load_image(image_path).convert("RGB")
 
         try:
-            from models.flux1.elastic_band import ElasticBandFlux1Runner
-            
-            runner = ElasticBandFlux1Runner(
-                pipe=pipe,
-                prompt=prompt,
-                tokens_to_edit=[category],
-                condition_image=condition_image,
-                seed=42,
-                use_lora=False,
-                guidance_scale=3.5 #standard flux1 guidance scale
-            )
+            if runner is None:
+                runner = ElasticBandFlux1Runner(
+                    pipe=pipe,
+                    prompt=prompt,
+                    tokens_to_edit=tokens_to_edit,
+                    condition_image=condition_image,
+                    seed=42,
+                    use_lora=False,
+                    guidance_scale=3.5
+                )
+            else:
+                runner.reset_sample(
+                    prompt=prompt,
+                    tokens_to_edit=tokens_to_edit,
+                    condition_image=condition_image
+                )
 
             stored_min = load_min_projection_value(concept_dir)
             initialization = find_effective_minimum(
@@ -189,3 +235,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

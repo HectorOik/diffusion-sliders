@@ -154,6 +154,22 @@ class ElasticBandFlux1Runner:
         self.reference_distance_cache.clear()
         self.pair_distance_cache.clear()
 
+    def reset_sample(
+        self,
+        prompt: str,
+        tokens_to_edit: list[str],
+        condition_image: Image.Image,
+    ) -> None:
+        self.clear_caches()
+        self.condition_image = condition_image
+        self.idx_to_edit = find_indices_to_edit(
+            pipe=self.pipe,
+            prompt=prompt,
+            tokens_to_edit=tokens_to_edit,
+            max_sequence_length=self.max_sequence_length,
+        )
+        self.base_prompt_embeds, self.pooled_prompt_embeds = self._encode_base_embeds(prompt)
+
     def _strength_path(self, concept_dir: Path, strength: float) -> Path:
         return concept_dir / f"strength_{strength:+.6f}.png"
 

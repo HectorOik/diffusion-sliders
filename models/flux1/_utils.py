@@ -148,10 +148,10 @@ def find_indices_to_edit(
 
 
 def apply_steering(prompt_embeds, idx_to_edit, steering_vec, factor):
-    # Ensure steering_vec is a 1D tensor of shape [12288] to match prompt_embeds[batch_idx, idx, :]
+    # Ensure steering_vec matches prompt_embeds dtype, device, and shape
     if isinstance(steering_vec, np.ndarray):
-        steering_vec = torch.tensor(steering_vec, dtype=prompt_embeds.dtype, device=prompt_embeds.device)
-    steering_vec = steering_vec.squeeze() # Removes any leading batch dimensions like [1, 12288] -> [12288]
+        steering_vec = torch.from_numpy(steering_vec)
+    steering_vec = steering_vec.to(device=prompt_embeds.device, dtype=prompt_embeds.dtype).squeeze()
 
     if steering_vec.shape[-1] != prompt_embeds.shape[-1]:
         raise ValueError(f"Steering vector width {steering_vec.shape[-1]} does not match prompt embeddings {prompt_embeds.shape[-1]}.")
