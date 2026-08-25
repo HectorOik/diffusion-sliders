@@ -114,7 +114,7 @@ def main():
 
     # 2. Load model pipeline ONCE
     print("Loading FLUX pipeline...")
-    pipe = build_pipeline(torch_dtype=torch.bfloat16, use_lora=True, use_distributed=True)
+    pipe = build_pipeline(torch_dtype=torch.bfloat16, use_lora=False, use_distributed=False)
 
     # 3. Execution Loop over stratified samples
     for data in tqdm(dataset, desc="Stratified Adaptive PIE-Bench Run"):

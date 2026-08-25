@@ -48,10 +48,11 @@ def load_flux2_text_stack(
     processor = PixtralProcessor.from_pretrained(model_name_or_path, subfolder="tokenizer")
 
     # Add this safety fallback to prevent the chat_template crash
-    if hasattr(processor, "chat_template") and processor.chat_template is None:
-        processor.chat_template = "{% for message in messages %}{{ message['content'] }}{% endfor %}"
-    elif hasattr(processor, "tokenizer") and getattr(processor.tokenizer, "chat_template", None) is None:
-        processor.tokenizer.chat_template = "{% for message in messages %}{{ message['content'] }}{% endfor %}"
+    default_template = "{% for message in messages %}{{ message['content'] }}{% endfor %}"
+    if hasattr(processor, "chat_template"):
+        processor.chat_template = default_template
+    elif hasattr(processor, "tokenizer") and processor.tokenizer is not None:
+        processor.tokenizer.chat_template = default_template
 
     text_encoder = Mistral3ForConditionalGeneration.from_pretrained(
         model_name_or_path,
