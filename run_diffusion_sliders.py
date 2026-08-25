@@ -124,6 +124,7 @@ def main():
     parser.add_argument("--output_dir", type=str, default="piebench_adaptive_outputs", help="Output directory")
     parser.add_argument("--samples_per_cat", type=int, default=20, help="Number of samples per category")
     parser.add_argument("--config", type=str, default="configs/flux1_local.yaml", help="Path to elastic band config YAML")
+    parser.add_argument("--min_strength", type=float, default=-25.0, help="Minimum steering strength for range evaluation (e.g. -25.0)")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -201,7 +202,9 @@ def main():
 
             # Save computed vector so subsequent samples in same concept reuse it
             np.save(vector_file, steering_vector.cpu().numpy().astype(np.float32))
-            np.save(concept_dir / "min_projection_value.npy", np.array([-5.0], dtype=np.float32))
+
+        # Always ensure min_projection_value reflects requested min_strength
+        np.save(concept_dir / "min_projection_value.npy", np.array([args.min_strength], dtype=np.float32))
         condition_image = load_image(image_path).convert("RGB")
 
         try:
