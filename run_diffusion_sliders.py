@@ -172,14 +172,13 @@ def main():
         sample_output_dir = output_dir / category / sample_id
         sample_output_dir.mkdir(parents=True, exist_ok=True)
 
-        concept_dir = Path("outputs") / category
-        concept_dir.mkdir(parents=True, exist_ok=True)
+        concept_dir = sample_output_dir
         
         vector_file = concept_dir / "steering_last_layer.npy"
         if vector_file.exists() and np.load(vector_file).shape[-1] == 4096 and not np.allclose(np.load(vector_file), 0):
             steering_vector = load_steering_vector(vector_file, device=device)
         else:
-            # On-the-fly contrastive steering vector computation from PIE-bench target vs source prompt
+            # On-the-fly per-sample contrastive steering vector computation (target_prompt vs source_prompt)
             source_prompt = data.get("source_prompt", "")
             with torch.inference_mode():
                 target_embeds, _, _ = pipe.encode_prompt(prompt=prompt, device=device, max_sequence_length=512)
@@ -201,10 +200,10 @@ def main():
                 else:
                     steering_vector = torch.zeros(4096, dtype=torch.float32, device=device)
 
-            # Save computed vector so subsequent samples in same concept reuse it
+            # Save computed vector inside sample folder
             np.save(vector_file, steering_vector.cpu().numpy().astype(np.float32))
 
-        # Always ensure min_projection_value reflects requested min_strength
+        # Ensure min_projection_value reflects requested min_strength
         np.save(concept_dir / "min_projection_value.npy", np.array([args.min_strength], dtype=np.float32))
         condition_image = load_image(image_path).convert("RGB")
 
