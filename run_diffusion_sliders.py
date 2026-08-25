@@ -124,7 +124,8 @@ def main():
     parser.add_argument("--output_dir", type=str, default="piebench_adaptive_outputs", help="Output directory")
     parser.add_argument("--samples_per_cat", type=int, default=20, help="Number of samples per category")
     parser.add_argument("--config", type=str, default="configs/flux1_local.yaml", help="Path to elastic band config YAML")
-    parser.add_argument("--min_strength", type=float, default=-25.0, help="Minimum steering strength for range evaluation (e.g. -25.0)")
+    parser.add_argument("--min_strength", type=float, default=-5.0, help="Minimum steering strength for range evaluation (e.g. -5.0)")
+    parser.add_argument("--max_strength", type=float, default=0.0, help="Maximum steering strength for range evaluation (e.g. 0.0 or 5.0)")
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -241,7 +242,7 @@ def main():
                 concept_name=category,
                 steering_vector=steering_vector,
                 a_min=initialization["search_minimum_value"],
-                a_max=0.0,
+                a_max=args.max_strength,
                 config=elastic_band_config,
             )
             

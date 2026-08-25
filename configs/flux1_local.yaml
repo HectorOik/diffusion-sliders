@@ -4,8 +4,8 @@ elastic_band:
   # A strength is "valid" if its DreamSim distance to the unsteered reference is below this value.
   max_dreamsim_distance: 0.04
 
-  # Skip doubling probing for speed.
-  max_doubling_steps: 0
+  # Probe up to 2 doubling steps to find minimum value dynamically for each image.
+  max_doubling_steps: 2
 
   # Generate exactly 5 control points on the strength axis.
   starting_number_of_points: 5
