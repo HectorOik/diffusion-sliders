@@ -10,13 +10,19 @@ import argparse
 from pathlib import Path
 import glob
 
-# Import the repository's native adaptive elastic band engine
-from models.elastic_band import (
-    ElasticBandConfig, 
-    find_effective_minimum, 
-    elastic_band_search, 
-    load_min_projection_value
+# Import repository's native steering & elastic band modules
+from steering import load_steering_vector
+from steering.elastic_band import (
+    ElasticBandConfig,
+    find_effective_minimum,
+    elastic_band_search,
+    load_min_projection_value,
+    summarize_valid_range,
+    canonical_strength
 )
+# Import pipeline builder from Ekin's core utilities
+from models.flux2._utils import build_pipeline
+from diffusers.utils import load_image
 
 # ==========================================
 # 1. STRATIFIED PIE-BENCH LOADER
@@ -85,102 +91,100 @@ def load_dataset_stratified_pie_bench(mapping_file_path_or_dir, images_dir, samp
             
     return valid_dataset
 
-
-# ==========================================
-# 2. ADAPTIVE RUNNER ADAPTER PROTOCOL
-# ==========================================
-class PIEBenchRunnerBridge:
-    """Bridges PIE-bench inputs to the repository's native ElasticBandRunner protocol."""
-    
-    def __init__(self, image_path, prompt, model_runner_backend=None):
-        self.image_path = image_path
-        self.prompt = prompt
-        self.backend = model_runner_backend
-
-    def generate_images(self, concept_dir: Path, concept_name: str, steering_vector: torch.Tensor, strengths: list[float]) -> None:
-        # Calls your model's generation routine across the adaptive strengths control points
-        pass
-
-    def reference_distance(self, concept_dir: Path, concept_name: str, steering_vector: torch.Tensor, strength: float) -> float:
-        # Returns DreamSim distance to the unsteered reference image
-        return 0.04 
-
-    def pair_distance(self, concept_dir: Path, concept_name: str, steering_vector: torch.Tensor, left: float, right: float) -> float:
-        # Returns DreamSim distance between adjacent control points
-        return 0.01
-
-
-# ==========================================
-# 3. MAIN PIPELINE EXECUTION
-# ==========================================
-def main(args):
+def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # Paths & Configuration
+    mapping_file = "./datasets"
+    images_dir = "./datasets"
+    output_dir = Path("piebench_adaptive_outputs")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    config_path = Path("configs/flux2_local.yaml")
+    elastic_band_config = ElasticBandConfig.from_yaml(config_path)
 
-    # Load official YAML config hyperparams for the elastic band search
-    config = ElasticBandConfig.from_yaml(args.config) if os.path.exists(args.config) else ElasticBandConfig()
-
-    # Load balanced stratified sample set from PIE-bench
-    dataset = load_dataset_stratified_pie_bench(args.mapping_file, args.images_dir, samples_per_category=args.samples_per_cat)
+    # 1. Load balanced stratified sample set (20 samples * 10 categories = 200 total)
+    print("Loading stratified PIE-bench dataset...")
+    dataset = load_dataset_stratified_pie_bench(mapping_file, images_dir, samples_per_category=20)
     print(f"Loaded {len(dataset)} total samples across categories for adaptive evaluation.")
 
-    for data in tqdm(dataset, desc="PIE-Bench Adaptive Pipeline"):
-        sample_id = data["id"]
-        sample_output_dir = os.path.join(args.output_dir, sample_id)
-        Path(sample_output_dir).mkdir(parents=True, exist_ok=True)
+    # 2. Load the heavy model pipeline ONCE to save VRAM and time
+    print("Loading FLUX.2 pipeline...")
+    pipe = build_pipeline(torch_dtype=torch.bfloat16, use_lora=True, use_distributed=True)
 
-        if not os.path.exists(data["image_path"]):
+    # 3. Execution Loop over your stratified samples
+    for data in tqdm(dataset, desc="Stratified Adaptive PIE-Bench Run"):
+        sample_id = data["id"]
+        category = data["category"]
+        prompt = data["prompt"]
+        image_path = data["image_path"]
+
+        if not os.path.exists(image_path):
             continue
 
-        target_concept = data["category"]
-        anchored_prompt = f"without changing the layout of the scene, {data['target_prompt']}"
+        sample_output_dir = output_dir / category / sample_id
+        sample_output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Setup vector directories (computed or cached per concept)
-        concept_dir = Path("outputs") / target_concept
+        # Setup concept directory for vectors (shared or sample-specific)
+        concept_dir = Path("outputs") / category
         concept_dir.mkdir(parents=True, exist_ok=True)
         
+        # Ensure steering vector exists (fallback to neutral if missing for dry run/testing)
         vector_file = concept_dir / "steering_last_layer.npy"
-        min_proj_file = concept_dir / "min_projection_value.npy"
-
-        # Fallbacks for dry run / missing cached vectors
         if not vector_file.exists():
-            np.save(vector_file, np.zeros((1, 1024)))
-        if not min_proj_file.exists():
-            np.save(min_proj_file, np.array([-5.0]))
+            np.save(vector_file, np.zeros((1, 1024), dtype=np.float32))
+            np.save(concept_dir / "min_projection_value.npy", np.array([-5.0], dtype=np.float32))
 
-        steering_vector = torch.from_numpy(np.load(vector_file)).to(device)
+        steering_vector = load_steering_vector(vector_file, device=device)
+        condition_image = load_image(image_path).convert("RGB")
 
         try:
-            runner = PIEBenchRunnerBridge(data["image_path"], anchored_prompt)
+            # We can instantiate Ekin's native runner directly here
+            from models.flux2.elastic_band import ElasticBandFlux2Runner
             
-            # 1. Find adaptive initial minimum using repository logic
-            initial_min = load_min_projection_value(concept_dir)
-            min_result = find_effective_minimum(runner, concept_dir, target_concept, steering_vector, initial_min, config)
-            a_min = min_result["search_minimum_value"]
+            runner = ElasticBandFlux2Runner(
+                pipe=pipe,
+                prompt=prompt,
+                tokens_to_edit=[category],
+                condition_image=condition_image,
+                seed=42,
+                use_lora=True,
+                guidance_scale=2.5
+            )
+
+            # Run adaptive search using native repository functions
+            stored_min = load_min_projection_value(concept_dir)
+            initialization = find_effective_minimum(
+                runner=runner,
+                concept_dir=sample_output_dir,
+                concept_name=category,
+                steering_vector=steering_vector,
+                initial_min=stored_min,
+                config=elastic_band_config,
+            )
             
-            # 2. Run official adaptive elastic band search for optimal operating range
-            search_result = elastic_band_search(runner, concept_dir, target_concept, steering_vector, a_min=a_min, a_max=0.0, config=config)
+            elastic_result = elastic_band_search(
+                runner=runner,
+                concept_dir=sample_output_dir,
+                concept_name=category,
+                steering_vector=steering_vector,
+                a_min=initialization["search_minimum_value"],
+                a_max=0.0,
+                config=elastic_band_config,
+            )
             
-            # Save search metadata trace
-            with open(os.path.join(sample_output_dir, "adaptive_search_trace.json"), "w") as f:
-                json.dump(search_result, f, indent=2)
-                
+            # Save metadata trace
+            with open(sample_output_dir / "adaptive_search_trace.json", "w") as f:
+                json.dump(elastic_result, f, indent=2)
+
         except Exception as e:
-            print(f"Error processing sample {sample_id}: {e}")
+            print(f"Error processing sample {sample_id} in category {category}: {e}")
             continue
 
         torch.cuda.empty_cache()
 
-    print("Adaptive PIE-bench evaluation batch complete!")
+    print("🎉 Stratified Adaptive PIE-bench evaluation batch complete!")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run Adaptive Elastic Band Search on Stratified PIE-bench")
-    parser.add_argument("--mapping_file", type=str, required=True, help="Path to PIE-bench datasets directory")
-    parser.add_argument("--images_dir", type=str, required=True, help="Path to images directory")
-    parser.add_argument("--output_dir", type=str, default="piebench_adaptive_outputs", help="Directory to save outputs")
-    parser.add_argument("--config", type=str, default="configs/flux2_local.yaml", help="Path to model config YAML")
-    parser.add_argument("--samples_per_cat", type=int, default=20, help="Stratified samples per category")
-    
-    args = parser.parse_args()
-    main(args)
+    main()
