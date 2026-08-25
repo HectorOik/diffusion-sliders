@@ -92,27 +92,31 @@ def load_dataset_stratified_pie_bench(mapping_file_path_or_dir, images_dir, samp
     return valid_dataset
 
 def main():
+    parser = argparse.ArgumentParser(description="Run stratified adaptive PIE-bench evaluation.")
+    parser.add_argument("--mapping_file", type=str, default="./datasets", help="Path to dataset directory")
+    parser.add_argument("--images_dir", type=str, default="./datasets", help="Path to images directory")
+    parser.add_argument("--output_dir", type=str, default="piebench_adaptive_outputs", help="Output directory")
+    parser.add_argument("--samples_per_cat", type=int, default=20, help="Number of samples per category")
+    parser.add_argument("--config", type=str, default="configs/flux2_local.yaml", help="Path to elastic band config YAML")
+    args = parser.parse_args()
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    # Paths & Configuration
-    mapping_file = "./datasets"
-    images_dir = "./datasets"
-    output_dir = Path("piebench_adaptive_outputs")
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    config_path = Path("configs/flux2_local.yaml")
-    elastic_band_config = ElasticBandConfig.from_yaml(config_path)
+    elastic_band_config = ElasticBandConfig.from_yaml(args.config)
 
-    # 1. Load balanced stratified sample set (20 samples * 10 categories = 200 total)
+    # 1. Load balanced stratified sample set
     print("Loading stratified PIE-bench dataset...")
-    dataset = load_dataset_stratified_pie_bench(mapping_file, images_dir, samples_per_category=20)
+    dataset = load_dataset_stratified_pie_bench(args.mapping_file, args.images_dir, samples_per_category=args.samples_per_cat)
     print(f"Loaded {len(dataset)} total samples across categories for adaptive evaluation.")
 
-    # 2. Load the heavy model pipeline ONCE to save VRAM and time
-    print("Loading FLUX.2 pipeline...")
+    # 2. Load model pipeline ONCE
+    print("Loading FLUX pipeline...")
     pipe = build_pipeline(torch_dtype=torch.bfloat16, use_lora=True, use_distributed=True)
 
-    # 3. Execution Loop over your stratified samples
+    # 3. Execution Loop over stratified samples
     for data in tqdm(dataset, desc="Stratified Adaptive PIE-Bench Run"):
         sample_id = data["id"]
         category = data["category"]
@@ -125,11 +129,9 @@ def main():
         sample_output_dir = output_dir / category / sample_id
         sample_output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Setup concept directory for vectors (shared or sample-specific)
         concept_dir = Path("outputs") / category
         concept_dir.mkdir(parents=True, exist_ok=True)
         
-        # Ensure steering vector exists (fallback to neutral if missing for dry run/testing)
         vector_file = concept_dir / "steering_last_layer.npy"
         if not vector_file.exists():
             np.save(vector_file, np.zeros((1, 1024), dtype=np.float32))
@@ -139,7 +141,6 @@ def main():
         condition_image = load_image(image_path).convert("RGB")
 
         try:
-            # We can instantiate Ekin's native runner directly here
             from models.flux2.elastic_band import ElasticBandFlux2Runner
             
             runner = ElasticBandFlux2Runner(
@@ -152,7 +153,6 @@ def main():
                 guidance_scale=2.5
             )
 
-            # Run adaptive search using native repository functions
             stored_min = load_min_projection_value(concept_dir)
             initialization = find_effective_minimum(
                 runner=runner,
@@ -173,7 +173,6 @@ def main():
                 config=elastic_band_config,
             )
             
-            # Save metadata trace
             with open(sample_output_dir / "adaptive_search_trace.json", "w") as f:
                 json.dump(elastic_result, f, indent=2)
 
