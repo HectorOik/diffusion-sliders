@@ -8,6 +8,7 @@ import pandas as pd
 from collections import defaultdict
 import argparse
 from pathlib import Path
+import glob
 
 # Import the repository's native adaptive elastic band engine
 from models.elastic_band import (
@@ -20,68 +21,69 @@ from models.elastic_band import (
 # ==========================================
 # 1. STRATIFIED PIE-BENCH LOADER
 # ==========================================
-def load_dataset_stratified_pie_bench(mapping_file, images_dir, samples_per_category=20):
-    dataset_records = []
+def load_dataset_stratified_pie_bench(mapping_file_path_or_dir, images_dir, samples_per_category=20):
+    """
+    Loads PIE-bench from parquet files with embedded image bytes and ensures a strict stratified split.
+    """
+    import pandas as pd
+    valid_dataset = []
     
-    if os.path.isdir(mapping_file):
-        parquet_files = sorted([os.path.join(dp, f) for dp, dn, filenames in os.walk(mapping_file) for f in filenames if f.endswith('.parquet')])
-    else:
-        parquet_files = [mapping_file]
+    if os.path.isdir(mapping_file_path_or_dir):
+        category_dirs = sorted([os.path.join(mapping_file_path_or_dir, d) for d in os.listdir(mapping_file_path_or_dir) if os.path.isdir(os.path.join(mapping_file_path_or_dir, d))])
         
-    if not parquet_files:
-        raise FileNotFoundError(f"No parquet files found at {mapping_file}")
-        
-    for p_file in parquet_files:
-        df = pd.read_parquet(p_file)
-        for idx, row in df.iterrows():
-            sample_id = str(row.get("id", f"sample_{idx}"))
-            target_prompt = str(row.get("target_prompt", ""))
-            source_prompt = str(row.get("source_prompt", ""))
-            category = str(row.get("category", "default"))
+        for cat_dir in category_dirs:
+            cat_name = os.path.basename(cat_dir)
+            if cat_name.startswith('.'):
+                continue
+                
+            parquet_files = glob.glob(os.path.join(cat_dir, "*.parquet"))
             
-            img_obj = row.get("image", None)
-            img_path = None
+            cat_samples_collected = 0
+            for p_file in sorted(parquet_files):
+                df = pd.read_parquet(p_file)
+                for idx, row in df.iterrows():
+                    if cat_samples_collected >= samples_per_category:
+                        break
+                        
+                    sample_id = str(row.get("id", f"sample_{idx}"))
+                    target_prompt = str(row.get("target_prompt", ""))
+                    source_prompt = str(row.get("source_prompt", ""))
+                    
+                    # Extract embedded image bytes from the parquet row
+                    img_obj = row.get("image", None)
+                    img_path = None
+                    
+                    temp_img_dir = os.path.join(images_dir, "_extracted_cache", cat_name)
+                    os.makedirs(temp_img_dir, exist_ok=True)
+                    img_path = os.path.join(temp_img_dir, f"{sample_id}.jpg")
+                    
+                    if not os.path.exists(img_path):
+                        if isinstance(img_obj, dict) and "bytes" in img_obj:
+                            img_bytes = img_obj["bytes"]
+                        elif isinstance(img_obj, bytes):
+                            img_bytes = img_obj
+                        else:
+                            img_bytes = None
+                            
+                        if img_bytes is not None:
+                            with open(img_path, "wb") as f_img:
+                                f_img.write(img_bytes)
+                    
+                    if os.path.exists(img_path):
+                        valid_dataset.append({
+                            "id": sample_id,
+                            "image_path": img_path,
+                            "prompt": target_prompt,
+                            "source_prompt": source_prompt,
+                            "category": cat_name
+                        })
+                        cat_samples_collected += 1
+                        
+                if cat_samples_collected >= samples_per_category:
+                    break
+            print(f"Category [{cat_name}]: Loaded {cat_samples_collected} samples.")
             
-            if isinstance(img_obj, dict) and "bytes" in img_obj:
-                temp_img_dir = os.path.join(images_dir, "_extracted_cache")
-                os.makedirs(temp_img_dir, exist_ok=True)
-                img_path = os.path.join(temp_img_dir, f"{sample_id}.jpg")
-                if not os.path.exists(img_path):
-                    with open(img_path, "wb") as f_img:
-                        f_img.write(img_obj["bytes"])
-            elif isinstance(img_obj, bytes):
-                temp_img_dir = os.path.join(images_dir, "_extracted_cache")
-                os.makedirs(temp_img_dir, exist_ok=True)
-                img_path = os.path.join(temp_img_dir, f"{sample_id}.jpg")
-                if not os.path.exists(img_path):
-                    with open(img_path, "wb") as f_img:
-                        f_img.write(img_obj)
-            else:
-                img_filename = str(row.get("path", f"{sample_id}.jpg"))
-                img_path = os.path.join(images_dir, img_filename)
-
-            dataset_records.append({
-                "id": sample_id,
-                "source_prompt": source_prompt,
-                "target_prompt": target_prompt,
-                "image_path": img_path,
-                "category": category,
-                "seed": 42
-            })
-
-    category_buckets = defaultdict(list)
-    for record in dataset_records:
-        category_buckets[record["category"]].append(record)
-
-    stratified_records = []
-    print("\n----- Stratified Sampling Breakdown -----")
-    for cat, records in category_buckets.items():
-        take_count = min(len(records), samples_per_category)
-        stratified_records.extend(records[:take_count])
-        print(f"Category '{cat}': grabbed {take_count}/{len(records)} samples")
-    print("----------------------------------------")
-
-    return stratified_records
+    return valid_dataset
 
 
 # ==========================================
